@@ -1,0 +1,85 @@
+import openai
+import telegram
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
+from datetime import timedelta, datetime
+from time import sleep
+from PIL import Image
+import io
+import logging
+
+# Константы для подключения
+API_ID = 'your_telegram_api_id'
+API_HASH = 'your_telegram_api_hash'
+PHONE_NUMBER = 'your_phone_number'
+CHANNEL = 'your_channel_name'
+OPENAI_API_KEY = 'your_openai_api_key'
+TELEGRAM_TOKEN = 'your_telegram_bot_token'
+CHAT_ID = 'your_chat_id'
+POST_INTERVAL = 3600  # Интервал в секундах (например, каждый час)
+
+# Инициализация клиентов
+openai.api_key = OPENAI_API_KEY
+bot = telegram.Bot(token=TELEGRAM_TOKEN)
+client = TelegramClient('session_name', API_ID, API_HASH)
+
+async def get_articles_from_channel():
+    await client.start()
+    history = await client(GetHistoryRequest(
+        peer=CHANNEL,
+        limit=5,  # Установка лимита сообщений для получения
+        offset_date=None,
+        offset_id=0,
+        max_id=0,
+        min_id=0,
+        add_offset=0,
+        hash=0
+    ))
+    return history.messages
+
+def generate_tags_and_image(prompt):
+    response = openai.ChatCompletion.create(
+        model="gpt-4-O",
+        messages=[
+            {"role": "system", "content": "Generate tags and a prompt for image generation based on the given text."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    tags_and_image_prompt = response.choices[0].message.content.strip().split('---')
+    
+    tags = tags_and_image_prompt[0].split(',')
+    image_prompt = tags_and_image_prompt[1]
+    
+    # Генерация картинки (эмуляция с Pillow)
+    image = Image.new('RGB', (100, 100), color = (73, 109, 137))
+    
+    return tags, image
+
+def send_message_with_image(chat_id, text, image, tags):
+    try:
+        bio = io.BytesIO()
+        image.save(bio, format='PNG')
+        bio.seek(0)
+        
+        bot.send_photo(chat_id=chat_id, photo=bio, caption=text + '\n\n#' + ' #'.join(tags))
+    except TelegramError as e:
+        logging.error(f"Ошибка отправки сообщения: {e}")
+
+async def main():
+    async with client:
+        while True:
+            articles = await get_articles_from_channel()
+
+            for article in articles:
+                if article.message:  # Проверяем, что сообщение не пустое
+                    tags, image = generate_tags_and_image(article.message)
+                    send_message_with_image(CHAT_ID, article.message, image, tags)
+
+            logging.info("Подождите перед следующей публикацией...")
+            sleep(POST_INTERVAL)
+
+# Запуск основного цикла
+import asyncio
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())
